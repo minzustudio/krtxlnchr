@@ -1,7 +1,17 @@
 const puppeteer = require('puppeteer-extra');
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+const cheerio = require('cheerio');
 
 puppeteer.use(StealthPlugin());
+
+// aria-label="Command &amp; Conquer" arrive tel quel (entité HTML non
+// décodée) : sans ça, le nom stocké ("Command &amp; Conquer") diffère du
+// nom que le navigateur restitue une fois l'attribut HTML parsé
+// ("Command & Conquer"), et les clés calculées à partir de l'un ou l'autre
+// ne correspondent plus jamais.
+function decoderEntitesHtml(texte) {
+    return cheerio.load(`<div>${texte}</div>`)('div').text();
+}
 
 function slugify(text) {
     return text
@@ -96,7 +106,7 @@ async function fetchSteamRipCatalogue() {
             const url = hrefMatch ? hrefMatch[1] : '';
 
             const labelMatch = liHtml.match(/aria-label="([^"]+)"/);
-            const nom = labelMatch ? labelMatch[1] : '';
+            const nom = labelMatch ? decoderEntitesHtml(labelMatch[1]) : '';
 
             const imgMatch = liHtml.match(/src="([^"]+)"/);
             const image = imgMatch ? imgMatch[1] : '';

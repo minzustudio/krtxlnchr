@@ -107,6 +107,9 @@
             <button class="sidebar-nav-btn" id="nav-stats" onclick="setPage('stats')" title="Stats" aria-label="Stats" data-i18n-title="nav.stats" data-i18n-aria="nav.stats">
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M7 16l4-6 4 3 5-8"/></svg>
             </button>
+            <button class="sidebar-nav-btn" id="nav-support" onclick="setPage('support')" title="Support" aria-label="Support" data-i18n-title="nav.support" data-i18n-aria="nav.support">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+            </button>
             <button class="sidebar-nav-btn sidebar-nav-btn-bottom" id="kofi" onclick="openkofi(`https://ko-fi.com/minzudev`)">
                 <div class="kofilogo"></div>
             </button>
@@ -202,6 +205,11 @@
                             <span data-i18n="stats.empty.desc">Launch a game from your library to start tracking stats.</span>
                         </div>
                     </div>
+                </div>
+
+                <div class="stats-leaderboard">
+                    <span class="settings-section-title" data-i18n="stats.badges">Badges</span>
+                    <div class="stats-badges-grid" id="statsBadgesGrid"></div>
                 </div>
             </div>
         </div>
@@ -400,6 +408,33 @@
                 </div>
 
                 <div class="settings-section">
+                    <span class="settings-section-title" data-i18n="settings.defender.title">Antivirus</span>
+
+                    <div class="settings-row">
+                        <div class="settings-row-text">
+                            <span class="settings-row-label" data-i18n="settings.defender.label">Add a Windows Defender exclusion</span>
+                            <span class="settings-row-desc" data-i18n="settings.defender.desc">Some antivirus false-positives delete game files after install without removing the folder, making Kortex think the game is still there. This tells Windows Defender to stop scanning your games folder. This is optional and at your own risk — Windows will ask for admin permission before anything happens.</span>
+                        </div>
+                        <button type="button" class="settings-action-btn" id="defenderExclusionBtn" onclick="ajouterExclusionAntivirusUI()" data-i18n="settings.defender.btn">Add exclusion</button>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <span class="settings-section-title" data-i18n="settings.backup.title">Backup</span>
+
+                    <div class="settings-row">
+                        <div class="settings-row-text">
+                            <span class="settings-row-label" data-i18n="settings.backup.label">Export or restore your library</span>
+                            <span class="settings-row-desc" data-i18n="settings.backup.desc">Save your settings and playtime to a file, or restore them from a previous backup.</span>
+                        </div>
+                        <div class="settings-backup-actions">
+                            <button type="button" class="settings-action-btn" id="exportLibraryBtn" onclick="exporterBibliotheque()" data-i18n="settings.backup.exportBtn">Export</button>
+                            <button type="button" class="settings-action-btn" id="importLibraryBtn" onclick="importerBibliotheque()" data-i18n="settings.backup.importBtn">Import</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-section">
                     <span class="settings-section-title" data-i18n="settings.updates.title">Updates</span>
 
                     <div class="settings-row">
@@ -423,10 +458,47 @@
 
             </div>
         </div>
-    </div>
-    
 
-    
+        <div id="support-container" style="display: none;">
+            <div class="settings-header">
+                <span class="settings-title" data-i18n="support.title">Support</span>
+            </div>
+            <div class="settings-body support-body">
+                <div class="settings-section">
+                    <span class="settings-section-title" data-i18n="support.sectionTitle">Contact us</span>
+                    <span class="settings-row-desc" data-i18n="support.subtitle">Found a bug or have a suggestion? Send us a message directly, no Discord account needed.</span>
+
+                    <div class="support-field">
+                        <label class="support-label" for="supportCategory" data-i18n="support.categoryLabel">Category</label>
+                        <select class="support-select" id="supportCategory">
+                            <option value="bug" data-i18n="support.category.bug">Bug</option>
+                            <option value="suggestion" data-i18n="support.category.suggestion">Suggestion</option>
+                            <option value="question" data-i18n="support.category.question">Question</option>
+                            <option value="other" data-i18n="support.category.other">Other</option>
+                        </select>
+                    </div>
+
+                    <div class="support-field">
+                        <label class="support-label" for="supportTitle" data-i18n="support.titleLabel">Title</label>
+                        <input type="text" class="support-input" id="supportTitle" maxlength="100" data-i18n-placeholder="support.titlePlaceholder" placeholder="A short summary" />
+                    </div>
+
+                    <div class="support-field">
+                        <label class="support-label" for="supportDescription" data-i18n="support.descLabel">Description</label>
+                        <textarea class="support-textarea" id="supportDescription" maxlength="1500" data-i18n-placeholder="support.descPlaceholder" placeholder="Explain what's going on..."></textarea>
+                        <span class="support-hint" id="supportCharCount">0 / 1500</span>
+                    </div>
+
+                    <div class="support-send-row">
+                        <button type="button" class="settings-action-btn is-primary" id="supportSendBtn" onclick="envoyerSupportMessage()" data-i18n="support.sendBtn">Send</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+
     
     
     

@@ -19,6 +19,27 @@ function normaliserNomJeu(nom) {
     return nom.toLowerCase().replace(/[^a-z0-9]/g, "_");
 }
 
+// Les noms de jeux scrapés peuvent contenir n'importe quel caractère
+// (apostrophes, esperluettes, guillemets...). Sans échappement, ces
+// caractères cassent le HTML généré par template literal (attribut coupé
+// en plein milieu, chaîne JS mal fermée dans un onclick), rendant la carte
+// injouable/incliquable.
+function echapperHtml(texte) {
+    const div = document.createElement('div');
+    div.textContent = String(texte ?? '');
+    return div.innerHTML;
+}
+
+function echapperPourAttributJs(texte) {
+    return String(texte ?? '')
+        .replace(/\\/g, '\\\\')
+        .replace(/&/g, '&amp;')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
 function nomJeuAffiche(nom) {
     return String(nom || '')
         .replace(/\s*\([^)]*\)/g, '')
@@ -68,20 +89,24 @@ function getPoids(gameName) {
 
 function genererHTMLCarteJeu(gameData, estInstalle, estEnDownload) {
     const nomNormalise = normaliserNomJeu(gameData.gameName);
-    const nomAffiche = nomJeuAffiche(gameData.gameName);
+    const nomAffiche = echapperHtml(nomJeuAffiche(gameData.gameName));
+    const urlJs = echapperPourAttributJs(gameData.url);
+    const nomJs = echapperPourAttributJs(gameData.gameName);
+    const urlAttribut = echapperHtml(gameData.url);
+    const imageUrlSure = String(gameData.imageLink || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     const tempsAffiche = estInstalle
         ? formaterTempsCarte(tempsJeuPour(gameData.gameName)?.tempsDeJeu)
         : t('card.uninstalled');
     const tempsIcone = estInstalle
         ? '<svg class="game-time-icon" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24"><title>clock-circle-linear</title><g fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 8V12L14.5 14.5"/></g></svg>'
         : '';
-    
+
     return `
-        <div class="game-inner-box ${estInstalle ? 'downloaded' : ''}" id="${nomNormalise}" name="${estInstalle ? 'downloaded' : estEnDownload ? "downloading" : 'uninstalled'}" data-gameurl="${gameData.url}" onclick="gameSelected('${gameData.url}','${gameData.gameName}', this)">
+        <div class="game-inner-box ${estInstalle ? 'downloaded' : ''}" id="${nomNormalise}" name="${estInstalle ? 'downloaded' : estEnDownload ? "downloading" : 'uninstalled'}" data-gameurl="${urlAttribut}" onclick="gameSelected('${urlJs}','${nomJs}', this)">
             <div class="background-container" id="${nomNormalise}_ingame_scale" style="scale:1; opacity:${estInstalle ? '100%' : '48%'}">
-                <div class="background ${estInstalle ? 'downloaded' : ''}" style="background-image: url('${gameData.imageLink}');"></div>
+                <div class="background ${estInstalle ? 'downloaded' : ''}" style="background-image: url('${imageUrlSure}');"></div>
                 <div class="ingame" id="${nomNormalise}_ingame" style="display: none;"></div>
-                <button class="downloadButton" style="display:${!estInstalle && !estEnDownload ? 'flex' : 'none'};" onclick="event.stopPropagation(); downloadgame('${gameData.url}', '${gameData.gameName}', this)">
+                <button class="downloadButton" style="display:${!estInstalle && !estEnDownload ? 'flex' : 'none'};" onclick="event.stopPropagation(); downloadgame('${urlJs}', '${nomJs}', this)">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-download-icon lucide-download"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>
                 </button>
                 <button class="game-action-btn" data-role="play" onclick="event.stopPropagation(); play('${nomNormalise}', this)" style="display:${estInstalle && !estEnDownload ? 'flex' : 'none'};">${ICONE_PLAY}</button>
@@ -194,7 +219,7 @@ function setLibraryView(view) {
 
 let currentPage = 'library';
 
-const PAGES_VALIDES = ['library', 'downloads', 'stats', 'settings'];
+const PAGES_VALIDES = ['library', 'downloads', 'stats', 'settings', 'support'];
 
 function setPage(page) {
     currentPage = PAGES_VALIDES.includes(page) ? page : 'library';
@@ -642,6 +667,26 @@ async function reinitialiserParametres() {
     await chargerParametresUI();
 }
 
+async function ajouterExclusionAntivirusUI() {
+    const bouton = document.getElementById('defenderExclusionBtn');
+    if (!window.api || !window.api.ajouterExclusionAntivirus) return;
+
+    const confirme = confirm(t('settings.defender.confirm'));
+    if (!confirme) return;
+
+    if (bouton) { bouton.disabled = true; bouton.textContent = t('settings.defender.adding'); }
+
+    const resultat = await window.api.ajouterExclusionAntivirus();
+
+    if (resultat.status === 'success') {
+        afficherToast({ title: t('toast.defender.successTitle'), desc: t('toast.defender.successDesc') });
+    } else {
+        afficherToast({ title: t('toast.defender.failTitle'), desc: resultat.message || t('toast.defender.failDesc') });
+    }
+
+    if (bouton) { bouton.disabled = false; bouton.textContent = t('settings.defender.btn'); }
+}
+
 const ICONE_ANNULER = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
 
 let telechargementsActifsUI = {};
@@ -809,6 +854,41 @@ function dessinerGraphiqueVitesse() {
     if (inProgressEl) inProgressEl.textContent = `${octetsEnCours.toFixed(1)} MB`;
 }
 
+const DEFINITIONS_BADGES = [
+    { id: 'first_install', icon: '🎮', nameKey: 'badges.firstInstall.name', descKey: 'badges.firstInstall.desc', condition: (ctx) => ctx.nbInstalles >= 1 },
+    { id: 'collector', icon: '📚', nameKey: 'badges.collector.name', descKey: 'badges.collector.desc', condition: (ctx) => ctx.nbInstalles >= 5 },
+    { id: 'librarian', icon: '🏛️', nameKey: 'badges.librarian.name', descKey: 'badges.librarian.desc', condition: (ctx) => ctx.nbInstalles >= 15 },
+    { id: 'first_hour', icon: '⏱️', nameKey: 'badges.firstHour.name', descKey: 'badges.firstHour.desc', condition: (ctx) => ctx.totalSecondes >= 3600 },
+    { id: 'marathon', icon: '🔥', nameKey: 'badges.marathon.name', descKey: 'badges.marathon.desc', condition: (ctx) => ctx.totalSecondes >= 36000 },
+    { id: 'legend', icon: '👑', nameKey: 'badges.legend.name', descKey: 'badges.legend.desc', condition: (ctx) => ctx.totalSecondes >= 360000 },
+    { id: 'explorer', icon: '🧭', nameKey: 'badges.explorer.name', descKey: 'badges.explorer.desc', condition: (ctx) => ctx.jeuxJoues >= 5 },
+    { id: 'devoted', icon: '💎', nameKey: 'badges.devoted.name', descKey: 'badges.devoted.desc', condition: (ctx) => ctx.maxJeuSecondes >= 36000 }
+];
+
+function renderBadges(totalSecondes) {
+    const grille = document.getElementById('statsBadgesGrid');
+    if (!grille) return;
+
+    const valeursJeux = Object.values(tempsJeuGlobal).map((jeu) => jeu?.tempsDeJeu || 0);
+
+    const contexte = {
+        totalSecondes,
+        nbInstalles: nomsInstalleGlobal.length,
+        jeuxJoues: valeursJeux.filter((secondes) => secondes > 0).length,
+        maxJeuSecondes: valeursJeux.reduce((max, secondes) => Math.max(max, secondes), 0)
+    };
+
+    grille.innerHTML = DEFINITIONS_BADGES.map((badge) => {
+        const debloque = badge.condition(contexte);
+        return `
+            <div class="stats-badge ${debloque ? 'is-unlocked' : ''}" title="${t(badge.descKey)}">
+                <span class="stats-badge-icon">${badge.icon}</span>
+                <span class="stats-badge-name">${t(badge.nameKey)}</span>
+            </div>
+        `;
+    }).join('');
+}
+
 function renderStatsPage() {
     const totalSecondes = Object.values(tempsJeuGlobal).reduce((total, jeu) => total + (jeu?.tempsDeJeu || 0), 0);
 
@@ -820,6 +900,8 @@ function renderStatsPage() {
 
     const catalogCountEl = document.getElementById('statsCatalogCount');
     if (catalogCountEl) catalogCountEl.textContent = catalogueGames.length;
+
+    renderBadges(totalSecondes);
 
     const classement = catalogueGames
         .map((gameData) => {
@@ -850,9 +932,9 @@ function renderStatsPage() {
     listeEl.innerHTML = classement.map((entree, index) => `
         <div class="stats-rank-row">
             <span class="stats-rank-num">${index + 1}</span>
-            <div class="stats-rank-thumb" style="background-image:url('${entree.gameData.imageLink}');"></div>
+            <div class="stats-rank-thumb" style="background-image:url('${String(entree.gameData.imageLink || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'")}');"></div>
             <div class="stats-rank-info">
-                <span class="stats-rank-name">${nomJeuAffiche(entree.gameData.gameName)}</span>
+                <span class="stats-rank-name">${echapperHtml(nomJeuAffiche(entree.gameData.gameName))}</span>
                 <div class="stats-rank-bar"><span class="stats-rank-bar-fill" style="width:${(entree.tempsDeJeu / tempsMax) * 100}%;"></span></div>
             </div>
             <span class="stats-rank-time">${formaterTempsCarte(entree.tempsDeJeu)}</span>
@@ -1092,6 +1174,9 @@ if (window.electronAPI.onNoServerFound) {
                 ? t('toast.noServer.desc', { game: data.nomJeu })
                 : t('toast.noServer.descGeneric')
         });
+        // Recharge la bibliothèque pour que l'affichage (installé/en
+        // téléchargement/non installé) reflète bien l'état réel après l'échec.
+        loadCatalogue();
     });
 }
 
@@ -1253,3 +1338,89 @@ window.electronAPI.onProgression((pourcentage) => {
         textePourcent.innerText = `${pourcentage}%`;
     }
 });
+
+
+async function exporterBibliotheque() {
+    const bouton = document.getElementById('exportLibraryBtn');
+    if (!window.api || !window.api.exporterBibliotheque) return;
+
+    if (bouton) bouton.disabled = true;
+    const resultat = await window.api.exporterBibliotheque();
+
+    if (resultat.status === 'success') {
+        afficherToast({ title: t('toast.backup.exportTitle'), desc: t('toast.backup.exportDesc') });
+    } else if (resultat.status === 'error') {
+        afficherToast({ title: t('toast.backup.exportFailTitle'), desc: resultat.message });
+    }
+
+    if (bouton) bouton.disabled = false;
+}
+
+document.addEventListener('input', (event) => {
+    if (event.target && event.target.id === 'supportDescription') {
+        const compteur = document.getElementById('supportCharCount');
+        if (compteur) compteur.textContent = `${event.target.value.length} / 1500`;
+    }
+});
+
+async function envoyerSupportMessage() {
+    const bouton = document.getElementById('supportSendBtn');
+    const titreInput = document.getElementById('supportTitle');
+    const descriptionInput = document.getElementById('supportDescription');
+    const categorieSelect = document.getElementById('supportCategory');
+
+    if (!titreInput || !descriptionInput || !categorieSelect || !window.api || !window.api.envoyerSupport) return;
+
+    const titre = titreInput.value.trim();
+    const description = descriptionInput.value.trim();
+
+    if (!titre || !description) {
+        afficherToast({ title: t('toast.support.missingFieldsTitle'), desc: t('toast.support.missingFieldsDesc') });
+        return;
+    }
+
+    bouton.disabled = true;
+    const texteOriginalBouton = bouton.textContent;
+    bouton.textContent = t('support.sending');
+
+    const resultat = await window.api.envoyerSupport({
+        title: titre,
+        description,
+        category: categorieSelect.value
+    });
+
+    if (resultat.status === 'success') {
+        afficherToast({ title: t('toast.support.successTitle'), desc: t('toast.support.successDesc') });
+        titreInput.value = '';
+        descriptionInput.value = '';
+        const compteur = document.getElementById('supportCharCount');
+        if (compteur) compteur.textContent = '0 / 1500';
+    } else if (resultat.status === 'rate_limited') {
+        afficherToast({ title: t('toast.support.rateLimitedTitle'), desc: t('toast.support.rateLimitedDesc') });
+    } else {
+        afficherToast({ title: t('toast.support.failTitle'), desc: t('toast.support.failDesc') });
+    }
+
+    bouton.disabled = false;
+    bouton.textContent = texteOriginalBouton;
+}
+
+
+async function importerBibliotheque() {
+    const bouton = document.getElementById('importLibraryBtn');
+    if (!window.api || !window.api.importerBibliotheque) return;
+
+    if (bouton) bouton.disabled = true;
+    const resultat = await window.api.importerBibliotheque();
+
+    if (resultat.status === 'success') {
+        afficherToast({ title: t('toast.backup.importTitle'), desc: t('toast.backup.importDesc') });
+        await chargerParametresUI();
+        await loadCatalogue();
+    } else if (resultat.status === 'error') {
+        const description = resultat.message === 'invalidFile' ? t('toast.backup.invalidFile') : resultat.message;
+        afficherToast({ title: t('toast.backup.importFailTitle'), desc: description });
+    }
+
+    if (bouton) bouton.disabled = false;
+}

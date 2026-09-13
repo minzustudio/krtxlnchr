@@ -1,15 +1,53 @@
 # Dépendances (le dossier node_modules est très lourd)
 node_modules/
+scrape-server/node_modules/
+support-relay/node_modules/
 
-# Dossiers de build (générés par electron-builder)
+# Dossiers de build (générés par electron-builder) et leurs installeurs
+# (les utilisateurs récupèrent l'app via les releases, pas le repo)
 dist/
 games/
 
 # Fichiers sensibles (si tu y stockes des clés API, ce qui est déconseillé)
 .env
+data.json
+*.pem
+*.key
+*.crt
+
+# Scripts de dev/débogage perso, pas utilisés par l'application
 play.js
 test.js
+test3.js
 getSrc.js
-data.json
+checker.js
 update.bat
-test.js
+
+# Dump de données de scraping laissé à la racine par les scripts de dev
+# (le vrai catalogue utilisé par l'app vit dans le dossier userData, pas ici)
+games.json
+
+# Relais de support Cloudflare Worker : fichiers locaux de wrangler
+# (le vrai webhook Discord n'est JAMAIS stocké dans un fichier, voir support-relay/README.md)
+support-relay/.dev.vars
+support-relay/.wrangler/
+
+
+# Serveur de scraping (VPS) : certificat TLS et clé privée
+# (ne doivent JAMAIS être commités, voir scrape-server/README.md)
+scrape-server/data/
+
+# Config/sessions locales d'outils de dev (Claude Code, éditeurs...)
+# — usage perso, aucun intérêt ni info utile pour les utilisateurs de l'app
+.claude/
+.vscode/
+.idea/
+
+# Fichiers générés par l'OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs divers
+*.log
+npm-debug.log*

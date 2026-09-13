@@ -1,11 +1,63 @@
-const { app, BrowserWindow, ipcMain, globalShortcut,shell,clipboard, Notification, Tray, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut,shell,clipboard, Notification, Tray, Menu, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { Client: DiscordRPCClient } = require('@xhayper/discord-rpc');
+const axios = require('axios');
+const https = require('https');
+const tls = require('tls');
 
 process.on('unhandledRejection', (error) => {
     console.error('⚠️ Promesse non gérée (évite un crash) :', error);
 });
+
+// URL publique du relais Cloudflare Worker (voir support-relay/README.md).
+// Pas un secret : le vrai webhook Discord ne vit que côté relais.
+const SUPPORT_RELAY_URL = 'https://kortex-support-relay.kortex.workers.dev';
+
+// Serveur de scraping perso (VPS, voir scrape-server/README.md). Les infos
+// d'un jeu et la résolution des liens de téléchargement se font là-bas ;
+// le catalogue (liste des jeux), lui, est récupéré ici même via test2.js.
+// SCRAPE_SERVER_CERT_FINGERPRINT et SCRAPE_SERVER_API_KEY DOIVENT être
+// renseignées après le déploiement du serveur, sinon la connexion est refusée.
+const SCRAPE_SERVER_URL = 'https://82.41.119.103:4433';
+const SCRAPE_SERVER_CERT_FINGERPRINT = '52:44:D3:0C:08:90:DB:F9:AE:8D:00:4D:63:17:1E:53:B3:2F:18:6F:71:B0:34:2F:AE:D2:38:2A:5D:DC:A8:9C';
+const SCRAPE_SERVER_API_KEY = 'ed8cbfd309825ea09552332ab9de948fb729556e695b542881934c89f8798a1e';
+
+// Agent HTTPS avec "certificate pinning" : le certificat auto-signé du VPS
+// n'est jamais validé par une autorité (impossible sans domaine + accès
+// port 80/443 sur une IP nue), donc on vérifie nous-mêmes son empreinte
+// exacte à chaque connexion pour empêcher toute interception.
+class AgentScrapePinne extends https.Agent {
+    createConnection(options, callback) {
+        const socket = tls.connect({ ...options, rejectUnauthorized: false }, callback);
+        socket.once('secureConnect', () => {
+            const certificat = socket.getPeerCertificate();
+            const empreinteValide = certificat && certificat.fingerprint256 === SCRAPE_SERVER_CERT_FINGERPRINT;
+            if (!empreinteValide) {
+                socket.destroy(new Error('Empreinte du certificat du serveur de scraping invalide (connexion refusée par sécurité).'));
+            }
+        });
+        return socket;
+    }
+}
+
+const agentScrapePinne = new AgentScrapePinne();
+
+async function appelScrapeAPI(methode, route, donnees, timeoutMs = 20000) {
+    return axios({
+        method: methode,
+        url: `${SCRAPE_SERVER_URL}${route}`,
+        data: donnees,
+        httpsAgent: agentScrapePinne,
+        timeout: timeoutMs,
+        validateStatus: () => true,
+        headers: {
+            'X-Kortex-Key': SCRAPE_SERVER_API_KEY,
+            'Content-Type': 'application/json'
+        }
+    });
+}
 
 const dossierAppData = app.getPath('userData');
 const dossierDestination = path.join(dossierAppData, 'games');
@@ -124,7 +176,7 @@ async function mettreAJourActiviteDiscord() {
     const activite = {
         details: jeuActifDiscord ? t('discord.playing', { game: jeuActifDiscord }) : t('discord.browsing'),
         state: description,
-        largeImageKey: (jeuActifDiscord && imageJeuActifDiscord) ? imageJeuActifDiscord : 'kortex_logo',
+        largeImageKey: 'kortex_logo',
         largeImageText: jeuActifDiscord || 'Kortex Launcher',
         startTimestamp: discordActivityStartTime
     };
@@ -374,6 +426,93 @@ ipcMain.handle('reset-settings', async () => {
 
 ipcMain.handle('charger-settings', () => chargerSettings());
 
+ipcMain.handle('envoyer-support', async (event, donnees = {}) => {
+    const { title, description, category } = donnees;
+
+    if (!title || !description) {
+        return { status: 'error', message: 'Champs manquants.' };
+    }
+
+    try {
+        const reponse = await axios.post(SUPPORT_RELAY_URL, {
+            title: String(title).slice(0, 100),
+            description: String(description).slice(0, 1500),
+            category: String(category || 'other').slice(0, 40),
+            appVersion: app.getVersion()
+        }, {
+            timeout: 10000,
+            validateStatus: () => true
+        });
+
+        if (reponse.status === 200) return { status: 'success' };
+        if (reponse.status === 429) return { status: 'rate_limited' };
+
+        return { status: 'error', message: `Le relais a répondu avec le code ${reponse.status}.` };
+    } catch (error) {
+        console.error('Erreur envoi support :', error.message);
+        return { status: 'error', message: error.message };
+    }
+});
+
+ipcMain.handle('exporter-bibliotheque', async () => {
+    try {
+        const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+            title: 'Exporter la bibliothèque Kortex',
+            defaultPath: 'kortex-sauvegarde.json',
+            filters: [{ name: 'Sauvegarde Kortex', extensions: ['json'] }]
+        });
+        if (canceled || !filePath) return { status: 'cancelled' };
+
+        const tempsDeJeu = fs.existsSync(dataPath) ? JSON.parse(fs.readFileSync(dataPath, 'utf-8')) : {};
+
+        const sauvegarde = {
+            type: 'kortex-backup',
+            version: app.getVersion(),
+            date: new Date().toISOString(),
+            settings: chargerSettings(),
+            tempsDeJeu
+        };
+
+        fs.writeFileSync(filePath, JSON.stringify(sauvegarde, null, 4), 'utf-8');
+        return { status: 'success', path: filePath };
+    } catch (error) {
+        console.error('Erreur export bibliothèque :', error.message);
+        return { status: 'error', message: error.message };
+    }
+});
+
+ipcMain.handle('importer-bibliotheque', async () => {
+    try {
+        const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+            title: 'Importer une sauvegarde Kortex',
+            filters: [{ name: 'Sauvegarde Kortex', extensions: ['json'] }],
+            properties: ['openFile']
+        });
+        if (canceled || !filePaths.length) return { status: 'cancelled' };
+
+        const contenu = JSON.parse(fs.readFileSync(filePaths[0], 'utf-8'));
+        if (!contenu || contenu.type !== 'kortex-backup') {
+            return { status: 'error', message: 'invalidFile' };
+        }
+
+        if (contenu.settings) {
+            sauvegarderSettingsSurDisque({
+                ...settingsParDefaut,
+                ...contenu.settings,
+                discordRichPresence: { ...settingsParDefaut.discordRichPresence, ...(contenu.settings.discordRichPresence || {}) }
+            });
+        }
+        if (contenu.tempsDeJeu) {
+            fs.writeFileSync(dataPath, JSON.stringify(contenu.tempsDeJeu, null, 4), 'utf-8');
+        }
+
+        return { status: 'success' };
+    } catch (error) {
+        console.error('Erreur import bibliothèque :', error.message);
+        return { status: 'error', message: error.message };
+    }
+});
+
 ipcMain.handle('sauvegarder-settings', async (event, nouveauxSettings) => {
     const settings = {
         ...settingsParDefaut,
@@ -621,12 +760,7 @@ app.on('window-all-closed', () => {
 
 
 
-const cheerio = require('cheerio');
 const unrar = require('node-unrar-js');
-const { Client, pipeline } = require('undici');
-const { promisify } = require('util');
-const streamPipeline = promisify(pipeline);
-const { chromium } = require('playwright-core');
 
 ipcMain.handle('canal-securise', async (event, urlRecue, nomJeu) => {
     const nomSecurise = nomJeu ? nomJeu.toLowerCase().replace(/[^a-zA-Z0-9]/g, "_") : "jeu_telecharge";
@@ -637,7 +771,7 @@ ipcMain.handle('canal-securise', async (event, urlRecue, nomJeu) => {
         fs.mkdirSync(dossierDestination, { recursive: true });
     }
 
-    console.log(`\n[ÉTAPE 1] Récupération de la page du jeu : ${urlRecue}`);
+    console.log(`\n[ÉTAPE 1] Résolution du lien de téléchargement via le serveur...`);
 
     try {
         const { gotScraping } = await import('got-scraping');
@@ -649,254 +783,17 @@ ipcMain.handle('canal-securise', async (event, urlRecue, nomJeu) => {
             'Referer': 'https://steamrip.com/',
         };
 
-        const responseSteamRip = await gotScraping({ 
-            url: urlRecue, 
-            http2: true,
-            timeout: { request: 15000 }
-        });
-        
-        const $1 = cheerio.load(responseSteamRip.body);
-        const intermediateLinks = [];
+        const reponseResolution = await appelScrapeAPI('post', '/resolve-download', { url: urlRecue }, 150000);
 
-        $1('a').each((index, element) => {
-            const linkText = $1(element).text().trim();
-            if (linkText === 'DOWNLOAD HERE') {
-                let href = $1(element).attr('href');
-                if (href) {
-                    if (href.startsWith('//')) href = `https:${href}`;
-                    intermediateLinks.push(href);
-                }
+        if (reponseResolution.status !== 200 || reponseResolution.data?.status !== 'success') {
+            const message = reponseResolution.data?.message || `Le serveur a répondu avec le code ${reponseResolution.status}.`;
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('no-server-found', { nomJeu });
             }
-        });
-
-        if (intermediateLinks.length === 0) return { status: 'error', message: 'Aucun lien de téléchargement trouvé sur la page.' };
-
-        console.log(`[DEBUG] ${intermediateLinks.length} lien(s) serveur trouvé(s) pour "${nomJeu}" :`);
-        intermediateLinks.forEach((lien, i) => console.log(`   ${i + 1}. ${lien}`));
-
-        let bzzhrLink = null;
-        let megadbLink = null;
-        let gofileLink = null;
-        let cookiesGofile = "";
-
-        console.log(`[ÉTAPE 2] Scraping des hébergeurs...`);
-        for (const url of intermediateLinks) {
-            try {
-                if (url.includes('bzzhr.to') || url.includes('buzzheaver') || url.includes('buzzhvr')) {
-                    let browser;
-                    try {
-                        console.log(`[INFO] Lancement de Playwright pour scraper Buzzheaver...`);
-                        browser = await chromium.launch({
-                            headless: true,
-                            channel: 'chrome',
-                            args: [
-                                '--disable-blink-features=AutomationControlled',
-                                '--disable-features=IsolateOrigins,site-per-process',
-                                `--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36`
-                            ]
-                        });
-                        const context = await browser.newContext({
-                            viewport: { width: 1920, height: 1080 },
-                            locale: 'en-US',
-                            timezoneId: 'America/New_York'
-                        });
-                        const page = await context.newPage();
-
-                        await page.addInitScript(() => {
-                            Object.defineProperty(navigator, 'webdriver', { get: () => false });
-                            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-                            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-                        });
-
-                        await page.goto(urlRecue, { waitUntil: 'domcontentloaded', timeout: 20000 });
-
-                        const boutonBuzzheaver = page.locator('a[href*="bzzhr.to"], a[href*="buzzheaver"], a[href*="buzzhvr"]').first();
-                        await boutonBuzzheaver.waitFor({ state: 'visible', timeout: 15000 });
-
-                        const [ongletTelechargement] = await Promise.all([
-                            context.waitForEvent('page', { timeout: 20000 }),
-                            boutonBuzzheaver.click()
-                        ]);
-
-                        await ongletTelechargement.waitForLoadState('domcontentloaded', { timeout: 20000 });
-
-                        const lienCopie = ongletTelechargement.locator('a.copy[onclick*="copyDownloadLink"]').first();
-                        await lienCopie.waitFor({ state: 'attached', timeout: 20000 });
-
-                        const cheminTelechargement = await lienCopie.evaluate((lien) => {
-                            const match = (lien.getAttribute('onclick') || '').match(/copyDownloadLink\('([^']+)'\)/);
-                            return match ? match[1].replace(/\\\//g, '/') : null;
-                        });
-
-                        if (cheminTelechargement) {
-                            const origineOnglet = new URL(ongletTelechargement.url()).origin;
-                            bzzhrLink = `${origineOnglet}${cheminTelechargement}`;
-                            console.log(`[SUCCÈS] Lien Buzzheaver trouvé !`);
-                        } else {
-                            throw new Error("Bouton 'Copy download link' introuvable sur la page Buzzheaver.");
-                        }
-                    } catch (err) {
-                        console.error(`[ERREUR] Buzzheaver ignoré :`, err.message);
-                    } finally {
-                        if (browser) await browser.close();
-                    }
-
-                } else if (url.includes('megadb.net')) {
-                    let browser;
-                    try {
-                        console.log(`[INFO] Lancement de Playwright pour scraper MegaDB...`);
-                        browser = await chromium.launch({
-                            headless: true,
-                            channel: 'chrome',
-                            args: [
-                                '--no-sandbox',
-                                '--disable-blink-features=AutomationControlled',
-                                '--disable-features=IsolateOrigins,site-per-process',
-                                `--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36`
-                            ]
-                        });
-
-                        const context = await browser.newContext({
-                            viewport: { width: 1920, height: 1080 },
-                            locale: 'en-US',
-                            timezoneId: 'America/New_York',
-                            acceptDownloads: true 
-                        });
-
-                        const page = await context.newPage();
-
-                        await page.addInitScript(() => {
-                            Object.defineProperty(navigator, 'webdriver', { get: () => false });
-                            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-                            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-                        });
-
-                        let timeoutMegaDB;
-                        const linkPromise = new Promise((resolve, reject) => {
-                            timeoutMegaDB = setTimeout(() => reject(new Error('Timeout API MegaDB')), 60000);
-
-                            context.on('download', async (download) => {
-                                const dlUrl = download.url();
-                                clearTimeout(timeoutMegaDB);
-                                try { await download.cancel(); } catch (err) {}
-                                resolve(dlUrl);
-                            });
-
-                            page.on('request', (request) => {
-                                const reqUrl = request.url();
-                                if (reqUrl.includes(':8080/d/') || reqUrl.match(/\.(rar|zip|7z)$/i)) {
-                                    clearTimeout(timeoutMegaDB);
-                                    resolve(reqUrl);
-                                }
-                            });
-                        });
-                        linkPromise.catch(() => {});
-
-                        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-                        await new Promise(r => setTimeout(r, 11000));
-                        
-                        try {
-                            await page.click('#downloadbtn');
-                        } catch (e) {
-                            console.log('⚠️ Impossible de cliquer sur le bouton MegaDB :', e.message);
-                        }
-
-                        const directLink = await linkPromise;
-                        if (directLink) {
-                            megadbLink = directLink;
-                            console.log(`[SUCCÈS] Lien MegaDB récupéré !`);
-                        }
-                    } catch (err) {
-                        console.error(`[ERREUR] MegaDB ignoré :`, err.message);
-                    } finally {
-                        clearTimeout(timeoutMegaDB);
-                        if (browser) await browser.close();
-                    }
-
-                } else if (url.includes('gofile.io')) {
-                    let browser;
-                    try {
-                        console.log(`[INFO] Lancement de Playwright pour scraper Gofile...`);
-                        browser = await chromium.launch({
-                            headless: true,
-                            channel: 'chrome',
-                            args: [
-                                '--disable-blink-features=AutomationControlled',
-                                '--disable-features=IsolateOrigins,site-per-process',
-                                `--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36`
-                            ]
-                        });
-                        const context = await browser.newContext({
-                            viewport: { width: 1920, height: 1080 },
-                            locale: 'en-US',
-                            timezoneId: 'America/New_York'
-                        });
-                        const page = await context.newPage();
-
-                        await page.addInitScript(() => {
-                            Object.defineProperty(navigator, 'webdriver', { get: () => false });
-                            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-                            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-                        });
-
-                        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-
-                        const boutonProprietesDirect = page.locator('button[data-action="properties"]');
-                        const boutonProprietesVisibleDirect = await boutonProprietesDirect.first().isVisible().catch(() => false);
-
-                        if (boutonProprietesVisibleDirect) {
-                            console.log('[INFO] Gofile : ancien format détecté, clic direct sur Properties.');
-                            await boutonProprietesDirect.first().click();
-                        } else {
-                            console.log('[INFO] Gofile : nouveau format détecté, passage par le menu.');
-                            const boutonMenu = page.locator('button[data-action="item-menu"]');
-                            await boutonMenu.waitFor({ state: 'visible', timeout: 15000 });
-                            await boutonMenu.click();
-
-                            const boutonProprietes = page.getByRole('menuitem', { name: 'Properties' });
-                            await boutonProprietes.waitFor({ state: 'visible', timeout: 10000 });
-                            await boutonProprietes.click();
-                        }
-
-                        await page.waitForFunction(() => {
-                            return Array.from(document.querySelectorAll('.divide-y span.shrink-0'))
-                                .some((span) => span.textContent.trim() === 'Name');
-                        }, { timeout: 10000 });
-
-                        const proprietes = await page.evaluate(() => {
-                            const resultat = {};
-                            document.querySelectorAll('.divide-y > div').forEach((ligne) => {
-                                const label = ligne.querySelector('span.shrink-0')?.textContent.trim();
-                                const valeur = ligne.querySelector('span.break-all')?.textContent.trim();
-                                if (label && valeur) resultat[label] = valeur;
-                            });
-                            return resultat;
-                        });
-
-                        const nomFichier = proprietes['Name'];
-                        const idFichier = proprietes['ID'];
-                        const storedOn = proprietes['Stored on']?.split(',')[0]?.trim();
-
-                        if (nomFichier && idFichier && storedOn) {
-                            const pageCookies = await page.context().cookies();
-                            cookiesGofile = pageCookies.map(c => `${c.name}=${c.value}`).join('; ');
-                            gofileLink = `https://${storedOn}.gofile.io/download/web/${idFichier}/${encodeURIComponent(nomFichier)}`;
-                            console.log(`[SUCCÈS] Lien Gofile récupéré !`);
-                        } else {
-                            throw new Error("Propriétés Gofile incomplètes (Name/ID/Stored on manquants).");
-                        }
-                    } catch (err) {
-                        console.error(`[ERREUR] Gofile ignoré :`, err.message);
-                    } finally {
-                        if (browser) await browser.close();
-                    }
-                }
-            } catch (e) { 
-                console.error(`[ERREUR] Impossible de scraper l'URL ${url}:`, e.message); 
-            }
+            return { status: 'error', message };
         }
 
-        console.log(`\n[ÉTAPE 3] Sélection du serveur prioritaire...`);
+        console.log(`\n[ÉTAPE 2] Sélection du serveur prioritaire...`);
 
         async function validerLien(link, cookies = "") {
             try {
@@ -915,11 +812,12 @@ ipcMain.handle('canal-securise', async (event, urlRecue, nomJeu) => {
             } catch (e) { return false; }
         }
 
-        const candidatsServeurs = [
-            bzzhrLink ? { nom: 'Buzzheaver', link: bzzhrLink, cookies: '', chunks: 15 } : null,
-            megadbLink ? { nom: 'MegaDB', link: megadbLink, cookies: '', chunks: 15 } : null,
-            gofileLink ? { nom: 'Gofile', link: gofileLink, cookies: cookiesGofile, chunks: 5 } : null
-        ].filter(Boolean);
+        const candidatsServeurs = reponseResolution.data.candidates.map((candidat) => ({
+            nom: candidat.hostName,
+            link: candidat.link,
+            cookies: candidat.cookies || '',
+            chunks: candidat.chunks || 5
+        }));
 
         if (candidatsServeurs.length === 0) {
             return { status: 'error', message: "Aucun lien de téléchargement n'a pu être récupéré sur les hébergeurs disponibles." };
@@ -1340,9 +1238,26 @@ function trouverDossierJeuInstalle(nomJeu) {
 
 ipcMain.handle('lister-dossiers-jeux', () => {
     if (!fs.existsSync(dossierDestination)) return [];
-    
-    return fs.readdirSync(dossierDestination).filter(file => {
-        return fs.statSync(path.join(dossierDestination, file));
+
+    return fs.readdirSync(dossierDestination).filter((nom) => {
+        const cheminComplet = path.join(dossierDestination, nom);
+        let stats;
+        try {
+            stats = fs.statSync(cheminComplet);
+        } catch (error) {
+            return false;
+        }
+
+        if (!stats.isDirectory()) return true; // .rar / .part : jamais "vides" au sens dossier
+
+        // Un antivirus peut supprimer le contenu d'un jeu installé sans
+        // supprimer le dossier lui-même : sans ce contrôle, l'app le
+        // considère toujours comme installé alors qu'il n'y a plus rien.
+        try {
+            return fs.readdirSync(cheminComplet).length > 0;
+        } catch (error) {
+            return false;
+        }
     });
 });
 
@@ -1366,6 +1281,45 @@ ipcMain.handle('uninstallGame', async (event, nomJeu) => {
 });
 
 const { spawn, exec } = require('child_process');
+
+ipcMain.handle('ajouter-exclusion-antivirus', async () => {
+    if (process.platform !== 'win32') {
+        return { status: 'error', message: 'Fonction disponible uniquement sur Windows.' };
+    }
+
+    try {
+        if (!fs.existsSync(dossierDestination)) {
+            fs.mkdirSync(dossierDestination, { recursive: true });
+        }
+
+        const cheminScript = path.join(os.tmpdir(), `kortex-exclusion-${Date.now()}.ps1`);
+        const cheminEchappe = dossierDestination.replace(/'/g, "''");
+        const contenuScript = `try { Add-MpPreference -ExclusionPath '${cheminEchappe}'; exit 0 } catch { exit 1 }`;
+        fs.writeFileSync(cheminScript, contenuScript, 'utf-8');
+
+        await new Promise((resolve, reject) => {
+            const cheminScriptEchappe = cheminScript.replace(/'/g, "''");
+            const commandeElevation = `try { $p = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File','${cheminScriptEchappe}') -Verb RunAs -Wait -PassThru; exit $p.ExitCode } catch { exit 1 }`;
+            const argsElevation = ['-NoProfile', '-Command', commandeElevation];
+
+            const enfant = spawn('powershell.exe', argsElevation, { windowsHide: true });
+            let erreur = '';
+            enfant.stderr.on('data', (d) => { erreur += d.toString(); });
+            enfant.on('error', reject);
+            enfant.on('close', (code) => {
+                if (code === 0) resolve();
+                else reject(new Error(erreur || `L'élévation a échoué (code ${code}). L'utilisateur a peut-être refusé la demande.`));
+            });
+        });
+
+        try { fs.unlinkSync(cheminScript); } catch (e) {}
+
+        return { status: 'success' };
+    } catch (error) {
+        console.error('Erreur ajout exclusion antivirus :', error.message);
+        return { status: 'error', message: error.message };
+    }
+});
 
 let launchWindow = null;
 
@@ -1493,27 +1447,34 @@ ipcMain.handle('startGame', async (event, nomJeu, gameInfo = {}) => {
 function trouverExe(dir, nomJeuCible) {
     let listeExe = [];
 
+    const dossiersIgnores = [
+        '_commonredist', 'redist', 'redistributables', 'directx', 'vcredist',
+        'dotnet', 'dotnetfx', 'extras', 'prerequisites', 'prereq',
+        'support', 'thirdparty', 'crashreportclient', '_redist'
+    ];
+
+    const motsInterdits = [
+        'unins', 'crash', 'setup', 'config', 'server',
+        'tool', 'reporter', 'benchmark', 'updater', 'redist',
+        'redistributable', 'directx', 'vcredist', 'vc_redist', 'dotnetfx',
+        'prereq', 'dxsetup', 'dxwebsetup', 'oalinst', 'crashpad',
+        'crashhandler', 'installer', 'uninstall', 'vcruntime', 'dependencies'
+    ];
+
     function scannerDossier(dossierActuel) {
         const fichiers = fs.readdirSync(dossierActuel, { withFileTypes: true });
-        
+
         for (const fichier of fichiers) {
             const cheminComplet = path.join(dossierActuel, fichier.name);
-            
+
             if (fichier.isDirectory()) {
-                const dossiersIgnores = ['_commonredist', 'redist', 'directx', 'vcredist', 'dotnet', 'extras'];
                 if (!dossiersIgnores.includes(fichier.name.toLowerCase())) {
                     scannerDossier(cheminComplet);
                 }
             } else if (fichier.name.toLowerCase().endsWith('.exe')) {
                 const nomFichier = fichier.name.toLowerCase();
-                
-                const motsInterdits = [
-                    'unins', 'crash', 'setup', 'config', 'server', 
-                    'tool', 'reporter', 'benchmark', 'updater', 'redist'
-                ];
-                
                 const contientMotInterdit = motsInterdits.some(mot => nomFichier.includes(mot));
-                
+
                 if (!contientMotInterdit) {
                     listeExe.push(cheminComplet);
                 }
@@ -1526,32 +1487,39 @@ function trouverExe(dir, nomJeuCible) {
     if (listeExe.length === 0) return null;
     if (listeExe.length === 1) return listeExe[0];
 
-    
-    const nomJeuNettoye = nomJeuCible.toLowerCase().replace(/[^a-z0-9]/g, "");
-    
-    for (const exe of listeExe) {
-        const nomExeBrut = path.basename(exe).toLowerCase().replace(/[^a-z0-9]/g, "");
-        if (nomExeBrut.includes(nomJeuNettoye) || (nomJeuNettoye !== "" && nomJeuNettoye.includes(nomExeBrut))) {
-            return exe;
-        }
-    }
+    // Plusieurs candidats : on les note plutôt que de trancher au premier
+    // indice venu. Le nom du jeu peut correspondre à l'exe lui-même, au
+    // dossier qui le contient (souvent le cas quand l'exe est enterré dans
+    // "Binaries/Win64/"), et un exe minuscule est presque toujours un
+    // utilitaire/launcher léger plutôt que le jeu lui-même.
+    const nomJeuNettoye = (nomJeuCible || '').toLowerCase().replace(/[^a-z0-9]/g, "");
 
-    let plusGrosExe = listeExe[0];
-    let tailleMax = 0;
-    
-    for (const exe of listeExe) {
-        try {
-            const stats = fs.statSync(exe);
-            if (stats.size > tailleMax) {
-                tailleMax = stats.size;
-                plusGrosExe = exe;
-            }
-        } catch (e) {
-            console.error(`Impossible de lire la taille de ${exe}`);
-        }
-    }
+    const candidats = listeExe.map((exe) => {
+        const nomExeNettoye = path.basename(exe, '.exe').toLowerCase().replace(/[^a-z0-9]/g, "");
+        const nomDossierParentNettoye = path.basename(path.dirname(exe)).toLowerCase().replace(/[^a-z0-9]/g, "");
 
-    return plusGrosExe;
+        let score = 0;
+
+        if (nomJeuNettoye) {
+            if (nomExeNettoye === nomJeuNettoye) score += 100;
+            else if (nomExeNettoye.includes(nomJeuNettoye) || nomJeuNettoye.includes(nomExeNettoye)) score += 60;
+
+            if (nomDossierParentNettoye.includes(nomJeuNettoye) || nomJeuNettoye.includes(nomDossierParentNettoye)) score += 20;
+        }
+
+        const profondeur = path.relative(dir, exe).split(path.sep).length;
+        score -= profondeur * 2;
+
+        let taille = 0;
+        try { taille = fs.statSync(exe).size; } catch (e) {}
+        if (taille < 300 * 1024) score -= 50;
+
+        return { exe, score, taille };
+    });
+
+    candidats.sort((a, b) => b.score - a.score || b.taille - a.taille);
+
+    return candidats[0].exe;
 }
 
 const executable = trouverExe(dossierJeu, nomJeu);
@@ -1704,22 +1672,7 @@ ipcMain.handle('stopDownload', async (event, nomJeu) => {
 
 ipcMain.handle('getGameData', async (event, urlRecue, nom) => {
     try {
-        console.log(`[SCRAPING] Tentative de récupération des données : ${urlRecue}`);
-
-        const { gotScraping } = await import('got-scraping');
-
-        const responseSteamRip = await gotScraping({ 
-            url: urlRecue, 
-            http2: true 
-        });
-
-        const $ = cheerio.load(responseSteamRip.body);
-
-        let gameSize = null;
-        let version = null;
-        let servers = [];
-        let mainImage = null;
-        let previews = [];
+        console.log(`[SCRAPING] Récupération des infos via le serveur : ${urlRecue}`);
 
         let donneesParties = {};
         if (fs.existsSync(dataPath)) {
@@ -1730,80 +1683,14 @@ ipcMain.handle('getGameData', async (event, urlRecue, nom) => {
             }
         }
 
-        const getAbsoluteUrl = (path) => {
-            if (!path) return null;
-            try {
-                return new URL(path, urlRecue).href;
-            } catch (e) {
-                return path;
-            }
-        };
-
-        $('li').each((index, element) => {
-            const textComplet = $(element).text().trim();
-
-            if (textComplet.toLowerCase().includes('game size:')) {
-                gameSize = textComplet.replace(/game size:/i, '').trim();
-            }
-
-            if (textComplet.toLowerCase().includes('version:')) {
-                version = textComplet.replace(/version:/i, '').trim();
-            }
-        });
-
-        $('a.shortc-button').each((index, element) => {
-            const buttonText = $(element).text().trim();
-            
-            if (buttonText.toUpperCase() === 'DOWNLOAD HERE') {
-                let rawServerName = $(element).parent().text().replace(/DOWNLOAD HERE/ig, '').trim();
-                
-                if (rawServerName) {
-                    const formattedName = rawServerName.charAt(0).toUpperCase() + rawServerName.slice(1).toLowerCase();
-                    if (!servers.includes(formattedName)) {
-                        servers.push(formattedName);
-                    }
-                }
-            }
-        });
-
-        const variantesBuzzheaver = ['buzzhvr', 'bzzhr', 'buzzheaver'];
-        const indexBuzzhvr = servers.findIndex((nomServeur) => {
-            const nomMinuscule = nomServeur.toLowerCase();
-            return variantesBuzzheaver.some((variante) => nomMinuscule.includes(variante));
-        });
-        if (indexBuzzhvr > 0) {
-            const [buzzhvr] = servers.splice(indexBuzzhvr, 1);
-            servers.unshift(buzzhvr);
+        const reponse = await appelScrapeAPI('post', '/game-info', { url: urlRecue });
+        if (reponse.status !== 200 || reponse.data?.status !== 'success') {
+            throw new Error(reponse.data?.message || `Le serveur a répondu avec le code ${reponse.status}.`);
         }
 
-        const mainImgElement = $('figure.single-featured-image img');
-        let rawMainImage = mainImgElement.attr('src');
+        const { gameSize, version, servers, mainImage, previews } = reponse.data;
 
-        if (!rawMainImage || rawMainImage.startsWith('data:')) {
-            const srcset = mainImgElement.attr('srcset');
-            const dataSrc = mainImgElement.attr('data-src') || mainImgElement.attr('data-lazy-src');
-
-            if (srcset) {
-                rawMainImage = srcset.split(',')[0].trim().split(' ')[0];
-            } else if (dataSrc) {
-                rawMainImage = dataSrc;
-            }
-        }
-
-        if (rawMainImage) {
-            mainImage = getAbsoluteUrl(rawMainImage);
-        }
-
-        $('img.alignnone').each((index, element) => {
-            const parentAnchor = $(element).parent('a').attr('href');
-            const imgSrc = parentAnchor || $(element).attr('src'); 
-            
-            if (imgSrc) {
-                previews.push(getAbsoluteUrl(imgSrc));
-            }
-        });
-
-        console.log(`[SUCCÈS] Données récupérées - Size: ${gameSize} | Version: ${version} | Images trouvées: ${previews.length + (mainImage ? 1 : 0)}`);
+        console.log(`[SUCCÈS] Données récupérées - Size: ${gameSize} | Version: ${version} | Images trouvées: ${(previews || []).length + (mainImage ? 1 : 0)}`);
 
         let donneesJeu = donneesParties[nom];
         if (!donneesJeu) {
@@ -1816,14 +1703,14 @@ ipcMain.handle('getGameData', async (event, urlRecue, nom) => {
             success: true,
             gameSize: gameSize || t('info.notFound'),
             version: version || t('info.notFound'),
-            servers: servers.length > 0 ? servers : ["/."],
+            servers: servers && servers.length > 0 ? servers : ["/."],
             mainImage: mainImage || t('info.notFound'),
-            previews: previews.length > 0 ? previews : [],
+            previews: previews && previews.length > 0 ? previews : [],
             playTime: donneesJeu ? donneesJeu.tempsDeJeu : "0"
         };
 
     } catch (error) {
-        console.error("❌ Erreur lors du scraping :", error.message);
+        console.error("❌ Erreur lors de la récupération des infos du jeu :", error.message);
         return {
             success: false,
             error: error.message

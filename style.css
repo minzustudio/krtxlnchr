@@ -1016,7 +1016,9 @@ button:focus-visible,
 }
 
 #kofi {
-    top: 210px;
+    position: absolute;
+    top: none;
+    bottom: 40px;
 }
 
 #catalogue {
@@ -1511,6 +1513,45 @@ button:focus-visible,
     font-weight: 600;
 }
 
+.stats-badges-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 10px;
+}
+
+.stats-badge {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 16px 10px;
+    background: var(--bg-surface-1);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    text-align: center;
+    opacity: 0.4;
+    filter: grayscale(1);
+    transition: opacity 0.2s var(--ease-standard), filter 0.2s var(--ease-standard), border-color 0.2s var(--ease-standard);
+}
+
+.stats-badge.is-unlocked {
+    opacity: 1;
+    filter: none;
+    border-color: var(--accent);
+    background: var(--accent-soft);
+}
+
+.stats-badge-icon {
+    font-size: 26px;
+    line-height: 1;
+}
+
+.stats-badge-name {
+    color: var(--text-primary);
+    font-size: 11px;
+    font-weight: 600;
+}
+
 .stats-empty {
     display: flex;
     flex-direction: column;
@@ -1876,6 +1917,80 @@ button:focus-visible,
 .settings-action-btn:disabled {
     opacity: 0.5;
     cursor: default;
+}
+
+.settings-backup-actions {
+    display: flex;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+.settings-action-btn.is-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+.settings-action-btn.is-primary:hover {
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+}
+
+.support-body .settings-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.support-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.support-label {
+    color: var(--text-primary);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.support-input,
+.support-select,
+.support-textarea {
+    box-sizing: border-box;
+    width: 100%;
+    background: var(--bg-surface-2);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    padding: 10px 12px;
+    outline: none;
+    transition: border-color 0.18s var(--ease-standard);
+}
+
+.support-input:focus,
+.support-select:focus,
+.support-textarea:focus {
+    border-color: var(--accent);
+}
+
+.support-textarea {
+    resize: vertical;
+    min-height: 130px;
+}
+
+.support-hint {
+    align-self: flex-end;
+    color: var(--text-tertiary);
+    font-size: 11px;
+}
+
+.support-send-row {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 4px;
 }
 
 

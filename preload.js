@@ -45,6 +45,18 @@ contextBridge.exposeInMainWorld('api', {
   },
   updateCatalogueManual: async () => {
     return await ipcRenderer.invoke('update-catalogue-manual');
+  },
+  exporterBibliotheque: async () => {
+    return await ipcRenderer.invoke('exporter-bibliotheque');
+  },
+  importerBibliotheque: async () => {
+    return await ipcRenderer.invoke('importer-bibliotheque');
+  },
+  envoyerSupport: async (donnees) => {
+    return await ipcRenderer.invoke('envoyer-support', donnees);
+  },
+  ajouterExclusionAntivirus: async () => {
+    return await ipcRenderer.invoke('ajouter-exclusion-antivirus');
   }
 });
 

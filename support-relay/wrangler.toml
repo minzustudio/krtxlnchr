@@ -1,0 +1,9 @@
+name = "kortex-support-relay"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+# Créé avec : wrangler kv:namespace create SUPPORT_KV
+# Remplace "id-a-remplacer" par l'id retourné par cette commande.
+[[kv_namespaces]]
+binding = "SUPPORT_KV"
+id = "928571abe5f349b3badd6c85ab9431f1"
