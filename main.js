@@ -18,11 +18,18 @@ const SUPPORT_RELAY_URL = 'https://kortex-support-relay.kortex.workers.dev';
 // Serveur de scraping perso (VPS, voir scrape-server/README.md). Les infos
 // d'un jeu et la résolution des liens de téléchargement se font là-bas ;
 // le catalogue (liste des jeux), lui, est récupéré ici même via test2.js.
-// SCRAPE_SERVER_CERT_FINGERPRINT et SCRAPE_SERVER_API_KEY DOIVENT être
-// renseignées après le déploiement du serveur, sinon la connexion est refusée.
+// La clé API et l'empreinte du certificat vivent dans secrets.local.js
+// (jamais suivi par git, voir secrets.example.js) — ne JAMAIS les remettre
+// en dur ici, ce fichier est suivi par git et potentiellement auto-poussé.
 const SCRAPE_SERVER_URL = 'https://82.41.119.103:4433';
-const SCRAPE_SERVER_CERT_FINGERPRINT = '52:44:D3:0C:08:90:DB:F9:AE:8D:00:4D:63:17:1E:53:B3:2F:18:6F:71:B0:34:2F:AE:D2:38:2A:5D:DC:A8:9C';
-const SCRAPE_SERVER_API_KEY = 'ed8cbfd309825ea09552332ab9de948fb729556e695b542881934c89f8798a1e';
+let secretsLocaux;
+try {
+    secretsLocaux = require('./secrets.local.js');
+} catch (e) {
+    console.error("⚠️ Fichier 'secrets.local.js' introuvable. Copie 'secrets.example.js' vers 'secrets.local.js' et renseigne tes vraies valeurs (voir scrape-server/README.md).");
+    secretsLocaux = { SCRAPE_SERVER_CERT_FINGERPRINT: '', SCRAPE_SERVER_API_KEY: '' };
+}
+const { SCRAPE_SERVER_CERT_FINGERPRINT, SCRAPE_SERVER_API_KEY } = secretsLocaux;
 
 // Agent HTTPS avec "certificate pinning" : le certificat auto-signé du VPS
 // n'est jamais validé par une autorité (impossible sans domaine + accès

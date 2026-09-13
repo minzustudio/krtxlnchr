@@ -14,6 +14,7 @@ data.json
 *.pem
 *.key
 *.crt
+secrets.local.js
 
 # Scripts de dev/débogage perso, pas utilisés par l'application
 play.js
@@ -33,9 +34,10 @@ support-relay/.dev.vars
 support-relay/.wrangler/
 
 
-# Serveur de scraping (VPS) : certificat TLS et clé privée
-# (ne doivent JAMAIS être commités, voir scrape-server/README.md)
-scrape-server/data/
+# Serveur de scraping (VPS) : code métier + certificat/clé privée.
+# Pas besoin aux utilisateurs de l'app (ils n'ont que le client Electron),
+# et ça évite d'exposer publiquement la logique de résolution des liens.
+scrape-server/
 
 # Config/sessions locales d'outils de dev (Claude Code, éditeurs...)
 # — usage perso, aucun intérêt ni info utile pour les utilisateurs de l'app
