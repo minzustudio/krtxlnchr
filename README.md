@@ -10,6 +10,10 @@ A sleek and user-friendly open-source game launcher designed to enhance your gam
 
 Our game launcher acts as a front-end for the popular site "steamrip.com," offering a better visual interface for game enthusiasts. It allows users to install and launch games with ease, providing a seamless experience. The launcher is safe, virus-free, and does not possess any games itself; it simply serves as a convenient gateway to the games available on the mentioned website.
 
+## Donwload
+
+- Download the game here : [Download it now](https://github.com/minzustudio/krtxlnchr/releases/download/v1.1.1/KortexLauncher-Setup-1.1.1.exe)
+
 ## Features
 
 - **User-Friendly Interface**: A clean and intuitive design that makes it easy to navigate and launch your games.
