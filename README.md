@@ -15,7 +15,7 @@ Our game launcher acts as a front-end for the popular site "steamrip.com," offer
 - **User-Friendly Interface**: A clean and intuitive design that makes it easy to navigate and launch your games.
 - **Multiplayer Support**: Enjoy your favorite games with friends online.
 - **Safe and Secure**: All games are safe and free from viruses, ensuring a secure gaming experience.
-- **Customizable**: Easily add and remove games according to your preferences.
+- **Customizable**: Easily add and remove games according to your preferences. Change the app colors, and find a lot of custom settings.
 
 ## Usage
 
