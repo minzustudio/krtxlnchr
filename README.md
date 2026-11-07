@@ -4,8 +4,7 @@ Originally, it was just a project for me and my friends x) I hope you will love 
 
 A sleek and user-friendly open-source game launcher designed to enhance your gaming experience by providing a visually appealing interface for accessing a wide range of cracked games that support multiplayer. This launcher is a great tool for gamers who want a more organized and aesthetically pleasing way to manage and launch their games.
 
-![Launcher Interface](<img width="1269" height="736" alt="image" src="https://github.com/user-attachments/assets/96103a0f-1716-4908-a686-b2be65d30bad" />
-)
+<img width="1269" height="736" alt="image" src="https://github.com/user-attachments/assets/96103a0f-1716-4908-a686-b2be65d30bad" />
 
 ## Overview
 
